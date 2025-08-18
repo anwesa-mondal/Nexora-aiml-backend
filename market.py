@@ -94,34 +94,51 @@ class EcommercePlatformAnalyzer:
         """Use Groq API to analyze and rank platforms by suitability."""
         prompt = f"""You are an e-commerce platform analysis expert. Analyze the suitability of platforms.
 
-Product Details:
-{json.dumps(product_details, indent=2)}
+        Product Details:
+        {json.dumps(product_details, indent=2)}
 
-Available Platforms:
-{json.dumps(platforms, indent=2)}
+        Available Platforms:
+        {json.dumps(platforms, indent=2)}
 
-Return JSON only:
-{{
-    "platform_analysis": {{
-        "platform_name": {{
-            "rank": "number",
-            "score": "number",
-            "reasoning": "string",
-            "advantages": ["list"],
-            "disadvantages": ["list"],
-            "target_audience_match": "Excellent/Good/Fair/Poor",
-            "category_fit": "Excellent/Good/Fair/Poor",
-            "competition_level": "Low/Medium/High",
-            "recommended_strategy": "string"
-        }}
-    }},
-    "overall_recommendations": {{
-        "top_3_platforms": ["list"],
-        "diversification_strategy": "string",
-        "pricing_considerations": "string",
-        "marketing_focus": "string"
-    }}
-}}"""
+        ⚠️ Important Instructions for Calculations:
+        1. Always calculate **GST** as `(GST% × Product Price)`. Show the percentage and the rupee value.
+        2. Always calculate **Commission** as `(Commission% × Sale Price)` unless stated otherwise.
+        3. Always include **Shipping Charges** as fixed or range-based (₹X–₹Y). If unknown, assume average ₹200.
+        4. Compute **Final Selling Charge** as `(Commission + GST + Shipping + Other Fees)`.
+        5. Compute **Profit** as `(Selling Price – Final Selling Charge)`. Also return **Net Profit Margin %** = `(Profit ÷ Selling Price × 100)`.
+        6. Keep all numeric fields consistent: if Product Price is ₹999, deductions and profit must add up logically.
+        7. If platform incentives, subsidies, or monetary benefits apply, deduct them from the cost and add them to profit calculation.
+        8. Do not estimate arbitrarily — show actual formula-based breakdowns.
+        9. If any data is missing, clearly state assumptions (e.g., "Commission assumed at 15%").
+
+        Return JSON only:
+        {{
+            "platform_analysis": {{
+                "platform_name": {{
+                    "rank": "number",
+                    "score": "number",
+                    "reasoning": "string",
+                    "advantages": ["list"],
+                    "disadvantages": ["list"],
+                    "target_audience_match": "Excellent/Good/Fair/Poor",
+                    "category_fit": "Excellent/Good/Fair/Poor",
+                    "competition_level": "Low/Medium/High",
+                    "gst_taxes": "string (approx GST percentage and cost impact, e.g., 18% = ₹180 on ₹999)",
+                    "other_charges": "string (listing fees, commission, shipping, etc.)",
+                    "final_selling_charge": "string (Commission + GST + Shipping = ₹X)",
+                    "monetary_benefits": ["list of benefits such as subsidies, seller programs, incentives"],
+                    "profit": "string (Profit = Selling Price – Final Selling Charge = ₹X, Net Margin = Y%)",
+                    "recommended_strategy": "string"
+                }}
+            }},
+            "overall_recommendations": {{
+                "top_3_platforms": ["list"],
+                "diversification_strategy": "string",
+                "pricing_considerations": "string",
+                "marketing_focus": "string"
+            }}
+        }}"""
+
 
         try:
             chat_completion = self.groq_client.chat.completions.create(
@@ -191,18 +208,24 @@ Return JSON only:
         for platform in platforms:
             info = analysis.get("platform_analysis", {}).get(platform, {})
             platforms_list.append({
-                "name": platform,
-                "homepage": self.known_platforms.get(platform, ""),
-                "rank": int(info.get("rank", 999)),
-                "score": float(info.get("score", 0)),
-                "reasoning": info.get("reasoning", ""),
-                "advantages": info.get("advantages", []),
-                "disadvantages": info.get("disadvantages", []),
-                "target_audience_match": info.get("target_audience_match", "Unknown"),
-                "category_fit": info.get("category_fit", "Unknown"),
-                "competition_level": info.get("competition_level", "Unknown"),
-                "recommended_strategy": info.get("recommended_strategy", "")
-            })
+            "name": platform,
+            "homepage": self.known_platforms.get(platform, ""),
+            "rank": int(info.get("rank", 999)),
+            "score": float(info.get("score", 0)),
+            "reasoning": info.get("reasoning", ""),
+            "gst_taxes": info.get("gst_taxes", "Unknown"),
+            "other_charges": info.get("other_charges", "Unknown"),
+            "profit": info.get("profit", "Unknown"),
+            "final_selling_charge": info.get("final_selling_charge", "Unknown"),
+            "monetary_benefits": info.get("monetary_benefits", []),
+            "advantages": info.get("advantages", []),
+            "disadvantages": info.get("disadvantages", []),
+            "target_audience_match": info.get("target_audience_match", "Unknown"),
+            "category_fit": info.get("category_fit", "Unknown"),
+            "competition_level": info.get("competition_level", "Unknown"),
+            "recommended_strategy": info.get("recommended_strategy", "")
+        })
+
 
        
         platforms_list.sort(key=lambda x: x["rank"])
@@ -248,3 +271,6 @@ if __name__ == "__main__":
     api_key = GROQ_API_KEY
     analysis = main(sample_data, api_key)
     print(analysis)
+
+
+
