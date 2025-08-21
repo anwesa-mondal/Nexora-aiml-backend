@@ -1,24 +1,21 @@
-# raw_test_api.py
-
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Dict
+from typing import Dict, Any
 from dotenv import load_dotenv
 import os
 import json
-from raw_test import main as analyze_raw_material_main  # import main() from raw_test.py
 
-# Load environment variables
+# Import the main function from raw_test.py
+from raw_test import main as procurement_main
+
+# Load environment variables from .env file
 load_dotenv()
 
-app = FastAPI(
-    title="Raw Material Procurement Analyzer API",
-    description="Analyze raw material sourcing and recommend procurement platforms.",
-    version="1.0.0"
-)
+app = FastAPI()
 
-# Enable CORS (open - tighten in production)
+# Allow CORS for all origins (you can restrict in production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,70 +24,104 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- Request & Response Models ----------
+# ---------- Request Models ----------
 
-class MaterialDetails(BaseModel):
-    material_name: str = Field(..., description="Name of the raw material (e.g., 'Cotton Fabric')")
-    category: str = Field(..., description="Material category (e.g., 'Textiles')")
-    specifications: Dict = Field(default_factory=dict, description="Key specifications like grade, quantity")
-    budget_range: Dict = Field(default_factory=dict, description="Budget info with min_price, max_price, currency")
-    timeline: Dict = Field(default_factory=dict, description="Required by date and flexibility")
-    preferred_location: str = Field(..., description="Preferred sourcing location")
-    business_type: str = Field(..., description="Business type (e.g., 'Textile Manufacturing')")
-    order_frequency: str = Field(..., description="Frequency of orders (e.g., 'Monthly')")
-    payment_preference: str = Field(..., description="Preferred payment terms (e.g., '30 days credit')")
+class Specifications(BaseModel):
+    grade: str
+    quantity_required: str
 
-class SupplierInfo(BaseModel):
+class BudgetRange(BaseModel):
+    min_price: float
+    max_price: float
+    currency: str
+    unit: str
+
+class Timeline(BaseModel):
+    required_by: str
+    flexibility: str
+
+class MaterialData(BaseModel):
+    material_name: str
+    category: str
+    specifications: Dict[str, Any]
+    budget_range: Dict[str, Any]
+    timeline: Dict[str, Any]
+    preferred_location: str
+    business_type: str
+    order_frequency: str
+    payment_preference: str
+
+# ---------- Response Models ----------
+
+class SupplierDetails(BaseModel):
+    company_name: str
+    location: str
+    price_range: str
+    minimum_order: str
+    delivery_time: str
+    contact_method: str
+
+class Supplier(BaseModel):
     title: str
     link: str
     snippet: str
-    supplier_details: Dict
+    supplier_details: SupplierDetails
 
-class PlatformSearchResults(BaseModel):
-    platform_name: str
-    suppliers: List[SupplierInfo]
-
-class RawMaterialAnalysisResponse(BaseModel):
-    material_details: MaterialDetails
+class ProcurementResponse(BaseModel):
+    material_details: Dict[str, Any]
     analysis_timestamp: str
-    discovered_platforms: List[str]
-    platform_search_results: Dict[str, List[SupplierInfo]]
+    discovered_platforms: list[str]
+    platform_search_results: Dict[str, list[Supplier]]
 
-# ---------- API Routes ----------
+# ---------- API Endpoints ----------
+
+@app.post("/analyze-procurement", response_model=ProcurementResponse)
+async def analyze_procurement_api(material_data: MaterialData):
+    """
+    Analyze procurement options for raw materials and fetch suppliers.
+    """
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    if not GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not set in environment.")
+
+    try:
+        result_json = procurement_main(material_data.model_dump(), GROQ_API_KEY)
+        result_dict = json.loads(result_json)
+        return result_dict
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse procurement response: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Procurement analysis failed: {str(e)}")
 
 @app.get("/")
 def root():
     return {
-        "message": "Raw Material Procurement Analyzer API is running",
+        "message": "Raw Material Procurement Analysis API. Submit material details to get platform & supplier analysis.",
         "endpoints": {
-            "analyze_raw_material": {
-                "path": "/analyze-raw-material",
+            "analyze_procurement": {
+                "path": "/analyze-procurement",
                 "method": "POST",
-                "description": "Analyze raw material sourcing and recommend procurement platforms"
+                "description": "Analyze procurement options for raw materials",
+                "request": {
+                    "material_name": "string",
+                    "category": "string",
+                    "specifications": "object (e.g. {grade, quantity_required})",
+                    "budget_range": "object (min_price, max_price, currency, unit)",
+                    "timeline": "object (required_by, flexibility)",
+                    "preferred_location": "string",
+                    "business_type": "string",
+                    "order_frequency": "string",
+                    "payment_preference": "string"
+                },
+                "response": {
+                    "material_details": "object",
+                    "analysis_timestamp": "string",
+                    "discovered_platforms": "list of platforms",
+                    "platform_search_results": "dict of platforms -> suppliers"
+                }
             }
         }
     }
 
-@app.post("/analyze-raw-material", response_model=RawMaterialAnalysisResponse)
-async def analyze_raw_material_api(material: MaterialDetails):
-    """
-    Analyze raw material requirements and recommend the most suitable procurement platforms.
-    """
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-    if not GROQ_API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="GROQ_API_KEY must be set in environment."
-        )
-
-    try:
-        material_dict = material.model_dump()
-        result_json = analyze_raw_material_main(material_dict, GROQ_API_KEY)
-        result_dict = json.loads(result_json)
-        return RawMaterialAnalysisResponse(**result_dict)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse analysis response: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Raw material analysis failed: {str(e)}")
 
