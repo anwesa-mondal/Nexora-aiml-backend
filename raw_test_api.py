@@ -1,48 +1,96 @@
 # raw_test_api.py
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Dict, Any
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Dict
+from dotenv import load_dotenv
 import os
 import json
-from raw_test import RawMaterialProcurementAnalyzer  # Make sure raw_test.py is in the same folder
-from dotenv import load_dotenv
+from raw_test import main as analyze_raw_material_main  # import main() from raw_test.py
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# FastAPI app
-app = FastAPI(title="Raw Material Procurement API")
+app = FastAPI(
+    title="Raw Material Procurement Analyzer API",
+    description="Analyze raw material sourcing and recommend procurement platforms.",
+    version="1.0.0"
+)
 
-# Pydantic model for request body
-class MaterialRequest(BaseModel):
-    material_name: str
-    category: str
-    specifications: Dict[str, Any]
-    budget_range: Dict[str, Any]
-    timeline: Dict[str, Any]
-    preferred_location: str
-    business_type: str
-    order_frequency: str
-    payment_preference: str
+# Enable CORS (open - tighten in production)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Root endpoint
+# ---------- Request & Response Models ----------
+
+class MaterialDetails(BaseModel):
+    material_name: str = Field(..., description="Name of the raw material (e.g., 'Cotton Fabric')")
+    category: str = Field(..., description="Material category (e.g., 'Textiles')")
+    specifications: Dict = Field(default_factory=dict, description="Key specifications like grade, quantity")
+    budget_range: Dict = Field(default_factory=dict, description="Budget info with min_price, max_price, currency")
+    timeline: Dict = Field(default_factory=dict, description="Required by date and flexibility")
+    preferred_location: str = Field(..., description="Preferred sourcing location")
+    business_type: str = Field(..., description="Business type (e.g., 'Textile Manufacturing')")
+    order_frequency: str = Field(..., description="Frequency of orders (e.g., 'Monthly')")
+    payment_preference: str = Field(..., description="Preferred payment terms (e.g., '30 days credit')")
+
+class SupplierInfo(BaseModel):
+    title: str
+    link: str
+    snippet: str
+    supplier_details: Dict
+
+class PlatformSearchResults(BaseModel):
+    platform_name: str
+    suppliers: List[SupplierInfo]
+
+class RawMaterialAnalysisResponse(BaseModel):
+    material_details: MaterialDetails
+    analysis_timestamp: str
+    discovered_platforms: List[str]
+    platform_search_results: Dict[str, List[SupplierInfo]]
+
+# ---------- API Routes ----------
+
 @app.get("/")
-def read_root():
-    return {"message": "Raw Material Procurement API is running"}
+def root():
+    return {
+        "message": "Raw Material Procurement Analyzer API is running",
+        "endpoints": {
+            "analyze_raw_material": {
+                "path": "/analyze-raw-material",
+                "method": "POST",
+                "description": "Analyze raw material sourcing and recommend procurement platforms"
+            }
+        }
+    }
 
-# Analyze material endpoint
-@app.post("/analyze")
-def analyze_material(request: MaterialRequest):
+@app.post("/analyze-raw-material", response_model=RawMaterialAnalysisResponse)
+async def analyze_raw_material_api(material: MaterialDetails):
+    """
+    Analyze raw material requirements and recommend the most suitable procurement platforms.
+    """
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
     if not GROQ_API_KEY:
-        raise HTTPException(status_code=500, detail="Groq API key not configured")
-    
-    analyzer = RawMaterialProcurementAnalyzer(GROQ_API_KEY)
-    result = analyzer.analyze_material_procurement(request.dict())
-    return result
+        raise HTTPException(
+            status_code=500,
+            detail="GROQ_API_KEY must be set in environment."
+        )
 
-# Optional: health check endpoint
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "timestamp": json.dumps(str(os.times()))}
+    try:
+        material_dict = material.model_dump()
+        result_json = analyze_raw_material_main(material_dict, GROQ_API_KEY)
+        result_dict = json.loads(result_json)
+        return RawMaterialAnalysisResponse(**result_dict)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse analysis response: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Raw material analysis failed: {str(e)}")
+
